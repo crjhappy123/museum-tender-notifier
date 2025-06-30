@@ -12,7 +12,10 @@ import requests
 
 TARGET_URLS = [
     ("Nanjing", "https://njggzy.nanjing.gov.cn/njweb/search/fullsearch.html?wd=%E5%8D%9A%E7%89%A9%E9%A6%86"),
-    ("Jiangsu", "http://jsggzy.jszwfw.gov.cn/search/fullsearch.html?wd=%E5%8D%9A%E7%89%A9%E9%A6%86")
+    ("Jiangsu", "http://jsggzy.jszwfw.gov.cn/search/fullsearch.html?wd=%E5%8D%9A%E7%89%A9%E9%A6%86"),
+    ("Suzhou", "https://ggzy.suzhou.gov.cn/szfront/search/fullsearch.html?wd=%E5%8D%9A%E7%89%A9%E9%A6%86"),
+    ("Wuxi", "https://zbtb.wuxi.gov.cn/search/fullsearch.html?wd=%E5%8D%9A%E7%89%A9%E9%A6%86"),
+    ("Zhejiang", "https://zjpubservice.zjzwfw.gov.cn/search/fullsearch.html?wd=%E5%8D%9A%E7%89%A9%E9%A6%86")
 ]
 
 MUSEUM_KEYWORDS = ["博物馆", "展览馆", "文物", "文化遗产"]
@@ -41,32 +44,57 @@ def fetch_page(url):
         print(f"请求过程中发生错误：{e}")
         return None
 
+def extract_link(a_tag, source):
+    if 'href' in a_tag.attrs and a_tag['href'].startswith('http'):
+        return a_tag['href']
+    onclick = a_tag.get('onclick', '')
+    parts = re.findall(r"'(.*?)'", onclick)
+    if source == "Nanjing" and len(parts) >= 2:
+        return f"https://njggzy.nanjing.gov.cn/njweb/ggzy/002004/002004001/{parts[0]}.html"
+    elif source == "Jiangsu" and len(parts) >= 1:
+        return f"http://jsggzy.jszwfw.gov.cn/{parts[0]}"
+    elif source == "Suzhou" and len(parts) >= 1:
+        return f"https://ggzy.suzhou.gov.cn/szfront/jyxx/{parts[0]}.html"
+    elif source == "Wuxi" and len(parts) >= 1:
+        return f"https://zbtb.wuxi.gov.cn/{parts[0]}"
+    elif source == "Zhejiang" and len(parts) >= 1:
+        return f"https://zjpubservice.zjzwfw.gov.cn/{parts[0]}"
+    return "链接解析失败"
+
+def extract_date(item):
+    for selector in ['span.content-date', 'span.time', 'div.date', 'p.pubtime']:
+        tag = item.select_one(selector)
+        if tag:
+            return tag.get_text(strip=True)
+    return '未知日期'
+
 def parse_tenders(html_content, source):
     soup = BeautifulSoup(html_content, 'html.parser')
     tenders = []
 
-    tender_items = soup.find_all('li', class_='search-row')
-    for item in tender_items:
+    for item in soup.find_all('li', class_='search-row'):
         title_tag = item.find('h2', class_='title')
-        if title_tag and title_tag.find('a'):
-            a_tag = title_tag.find('a')
-            title = a_tag.get_text(strip=True)
-            onclick = a_tag.get('onclick', '')
-            href = a_tag.get('href', '')
-            link = onclick.split("'")[5] if source == "Nanjing" else onclick.split("'")[1] if 'onclick' in a_tag.attrs else href
-            if any(keyword in title for keyword in MUSEUM_KEYWORDS):
-                tenders.append({
-                    'title': title,
-                    'link': link,
-                    'date': item.find('span', class_='content-date').get_text(strip=True) if item.find('span', class_='content-date') else '未知日期',
-                    'source': source
-                })
+        if not title_tag or not title_tag.find('a'):
+            continue
+
+        a_tag = title_tag.find('a')
+        title = a_tag.get_text(strip=True)
+
+        if any(keyword in title for keyword in MUSEUM_KEYWORDS):
+            link = extract_link(a_tag, source)
+            date = extract_date(item)
+            tenders.append({
+                'title': title,
+                'link': link,
+                'date': date,
+                'source': source
+            })
     return tenders
 
 def format_for_wechat(tenders):
     if not tenders:
         return "未找到博物馆相关的招标信息。"
-    message = "博物馆相关招标信息更新：\n\n"
+    message = "📢 博物馆相关招标信息更新：\n\n"
     for i, tender in enumerate(tenders, 1):
         message += f"{i}. {tender['title']}\n   来源: {tender['source']}\n   日期: {tender['date']}\n   链接: {tender['link']}\n\n"
     return message
@@ -93,6 +121,8 @@ def main():
         print(f"爬取 {source} 网站: {url}")
         html_content = fetch_page(url)
         if html_content:
+            with open(f"debug_html_{source.lower()}.html", "w", encoding="utf-8") as f:
+                f.write(html_content)
             tenders = parse_tenders(html_content, source)
             if tenders:
                 all_tenders.extend(tenders)
